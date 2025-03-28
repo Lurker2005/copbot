@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 import google.generativeai as genai
 from flask_cors import CORS
 import json
+import re
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -40,25 +41,55 @@ def get_response():
         model = genai.GenerativeModel(model_name="gemini-1.5-pro")
         response = model.generate_content(full_prompt)
 
-        # Handle the AI response and ensure it's formatted as structured JSON
+        # Handle the AI response
         response_text = response.text.strip()
 
-        # Attempt to parse the AI response as JSON
+        # Log the raw response to inspect if it's malformed or incomplete
+        # print("Raw AI response:", response_text)
+
+        # Perform string operations to clean and sanitize the response
+        cleaned_response = sanitize_response(response_text)
+
+        # Try parsing the sanitized response as JSON
         try:
-            response_json = json.loads(response_text)
+            response_json = json.loads(cleaned_response)
         except json.JSONDecodeError:
-            # If parsing fails, return an error message
+            # Log and return the response if it's still invalid JSON
+            print("Error parsing sanitized response:", cleaned_response)
             return jsonify({"error": "AI response is not in valid JSON format."}), 400
 
-        # Ensure that the response contains all required keys and is formatted correctly
+        # Ensure that the response contains all required keys
         expected_keys = ["art section", "category", "Punishment", "Applicable", "Brief description"]
         if not all(key in response_json for key in expected_keys):
             return jsonify({"error": "Response missing required fields."}), 400
 
+        # Return the structured response
         return jsonify({"response": response_json})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+def sanitize_response(response_text):
+    """
+    Function to clean and format the AI response into valid JSON.
+    """
+    # Remove unnecessary newlines and extra spaces
+    cleaned_text = response_text.replace("\n", " ").strip()
+
+    # Fix common mistakes like missing colons or commas
+    cleaned_text = re.sub(r'(\w)\s*:', r'"\1":', cleaned_text)  # Ensures keys are quoted
+    cleaned_text = re.sub(r'(\w)\s*"', r'"\1": "', cleaned_text)  # Ensure correct key-value structure
+
+    # Add quotes around values that are unquoted (simple cases)
+    cleaned_text = re.sub(r'(?<=:\s)(\w+)', r'"\1"', cleaned_text)
+
+    # Ensure the response starts and ends with curly braces
+    if not cleaned_text.startswith("{"):
+        cleaned_text = "{" + cleaned_text
+    if not cleaned_text.endswith("}"):
+        cleaned_text = cleaned_text + "}"
+
+    return cleaned_text
 
 if __name__ == "__main__":
     app.run(debug=True, port=6000)
